@@ -1,0 +1,4 @@
+fastapi
+httpx
+pydantic>=2
+pytest
