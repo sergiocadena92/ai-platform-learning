@@ -1,21 +1,32 @@
 from contextlib import asynccontextmanager
-
+import logging
+import time
+import uuid
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from app.config import get_settings
-
-
+from app.request_context import request_id_var
 from app.exceptions import (
     MarketNotFound,
     MarketServiceUnavailable,
 )
+from app.logging_config import configure_logging
 from app.routes import router
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    generate_latest,
+)
+from app.metrics import METRICS
+from fastapi.responses import Response
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    configure_logging(settings.log_level)
     app.state.http_client = httpx.AsyncClient(
         base_url=str(settings.market_service_base_url),
         timeout=settings.market_service_timeout_seconds,
@@ -29,6 +40,76 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(router)
+
+
+@app.middleware("http")
+async def log_requests(
+    request: Request,
+    call_next,
+):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+
+    token = request_id_var.set(request_id)
+
+    start = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+        route_template = get_route_template(request)
+
+        duration_seconds = time.perf_counter() - start
+
+        duration_ms = duration_seconds * 1000
+
+        METRICS.http_requests_total.labels(
+            method=request.method,
+            path=route_template,
+            status_code=response.status_code,
+        ).inc()
+
+        METRICS.http_request_duration_seconds.labels(
+            method=request.method,
+            path=route_template,
+        ).observe(duration_seconds)
+
+        response.headers["X-Request-ID"] = request_id
+
+        logger.info(
+            "Request completed",
+            extra={
+                "method": request.method,
+                "path": route_template,
+                "status_code": response.status_code,
+                "duration_ms": round(
+                    duration_ms,
+                    2,
+                ),
+            },
+        )
+
+        return response
+
+    finally:
+        request_id_var.reset(token)
+
+
+def get_route_template(request: Request) -> str:
+    fastapi_scope = request.scope.get("fastapi", {})
+    effective_route = fastapi_scope.get("effective_route_context")
+
+    if effective_route is not None:
+        return effective_route.path_format
+
+    route = request.scope.get("route")
+
+    if route is not None:
+        return getattr(
+            route,
+            "path_format",
+            request.url.path,
+        )
+
+    return request.url.path
 
 
 @app.exception_handler(MarketNotFound)
@@ -54,4 +135,12 @@ async def market_service_unavailable_handler(
         content={
             "detail": str(exc),
         },
+    )
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
     )

@@ -12,9 +12,15 @@ class Settings(BaseSettings):
         "production",
     ] = "development"
 
-    market_service_base_url: AnyHttpUrl = (
-        "http://127.0.0.1:8001"
-    )
+    log_level: Literal[
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    ] = "INFO"
+
+    market_service_base_url: AnyHttpUrl = "http://127.0.0.1:8001"
 
     market_service_timeout_seconds: float = Field(
         default=3.0,
@@ -27,6 +33,7 @@ class Settings(BaseSettings):
         env_prefix="APP_",
         extra="ignore",
     )
+
 
 @lru_cache
 def get_settings() -> Settings:

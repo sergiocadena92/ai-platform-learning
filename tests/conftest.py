@@ -63,3 +63,12 @@ def clear_settings_cache():
     yield
 
     get_settings.cache_clear()
+    
+@pytest.fixture
+def override_market_client():
+    def override(fake_client):
+        app.dependency_overrides[get_market_client] = lambda: fake_client
+
+    yield override
+
+    app.dependency_overrides.pop(get_market_client, None)    

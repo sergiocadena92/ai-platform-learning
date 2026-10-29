@@ -4,42 +4,69 @@ import time
 import httpx
 
 
+REQUESTS = [
+    ("request-us", "US"),
+    ("request-ca", "CA"),
+    ("request-uk", "UK"),
+]
+
+
 async def validate_product(
     client: httpx.AsyncClient,
-    sku: str,
+    request_id: str,
     country: str,
 ):
     payload = {
         "product": {
-            "sku": sku,
+            "sku": f"PIXEL-{country}",
             "price": 799,
-            "stock": 20,
+            "stock": 10,
             "countries": ["US", "CA", "UK"],
         },
         "country": country,
     }
 
     response = await client.post(
-        "http://127.0.0.1:8000/products/validate",
+        "/products/validate",
         json=payload,
+        headers={
+            "X-Request-ID": request_id,
+        },
     )
 
-    return response.json()
+    return {
+        "request_id_sent": request_id,
+        "request_id_received": response.headers.get(
+            "X-Request-ID"
+        ),
+        "country": country,
+        "status_code": response.status_code,
+        "body": response.json(),
+    }
 
 
 async def main():
-    start = time.perf_counter()
+    async with httpx.AsyncClient(
+        base_url="http://127.0.0.1:8000",
+    ) as client:
+        start = time.perf_counter()
 
-    async with httpx.AsyncClient() as client:
         results = await asyncio.gather(
-            validate_product(client, "PIXEL-US", "US"),
-            validate_product(client, "PIXEL-CA", "CA"),
-            validate_product(client, "PIXEL-UK", "UK"),
+            *[
+                validate_product(
+                    client,
+                    request_id,
+                    country,
+                )
+                for request_id, country in REQUESTS
+            ]
         )
 
-    elapsed = time.perf_counter() - start
+        elapsed = time.perf_counter() - start
 
-    print(results)
+    for result in results:
+        print(result)
+
     print(f"Elapsed: {elapsed:.2f} seconds")
 
 
