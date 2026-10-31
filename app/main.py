@@ -17,25 +17,47 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     generate_latest,
 )
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+from app.tracing import configure_tracing
 from app.metrics import METRICS
 from fastapi.responses import Response
+from opentelemetry.instrumentation.fastapi import (
+    FastAPIInstrumentor,
+)
 
 logger = logging.getLogger(__name__)
+
+TRACER_PROVIDER = configure_tracing(
+    get_settings().service_name
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+
     configure_logging(settings.log_level)
-    app.state.http_client = httpx.AsyncClient(
+
+    http_client = httpx.AsyncClient(
         base_url=str(settings.market_service_base_url),
         timeout=settings.market_service_timeout_seconds,
     )
 
+    HTTPXClientInstrumentor.instrument_client(
+        http_client,
+        tracer_provider=TRACER_PROVIDER,
+    )
+
+    app.state.http_client = http_client
+
     try:
         yield
     finally:
-        await app.state.http_client.aclose()
+        HTTPXClientInstrumentor.uninstrument_client(
+            http_client
+        )
+        await http_client.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -144,3 +166,12 @@ async def metrics():
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,
     )
+
+FastAPIInstrumentor.instrument_app(
+    app,
+    tracer_provider=TRACER_PROVIDER,
+    exclude_spans=[
+        "receive",
+        "send",
+    ],
+)

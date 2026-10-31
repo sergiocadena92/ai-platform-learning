@@ -82,3 +82,28 @@ class ProductValidationRequest(BaseModel):
 class MarketStatus(BaseModel):
     country: str
     enabled: bool
+
+
+class LLMResponse(BaseModel):
+    text: str
+    model: str
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+    done_reason: str | None = None
+
+    total_duration_ns: int | None = None
+    load_duration_ns: int | None = None
+    prompt_eval_duration_ns: int | None = None
+    eval_duration_ns: int | None = None
+
+class ProductExplanation(BaseModel):
+    sku: str
+    market: str
+    status: ReadinessStatus
+    reason: str
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
